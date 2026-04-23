@@ -1,0 +1,6 @@
+__pycache__/
+*.zip
+.venv/
+.vscode/
+zip_ignore.egg-info/
+
