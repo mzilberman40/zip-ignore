@@ -21,7 +21,11 @@ def read_ignore_patterns(ignore_path: Path) -> List[str]:
     """
     if not ignore_path.exists():
         return []
-    lines = ignore_path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = ignore_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise OSError(f"Cannot read ignore file '{ignore_path}': {exc}") from exc
+
     patterns: List[str] = []
     for line in lines:
         s = line.strip()
@@ -67,34 +71,34 @@ def create_archive(root: Path, output_zip: Path, spec: PathSpec, verbose: bool =
     if is_relative_to(output_zip, root):
         archive_rel_posix = rel_posix(output_zip, root)
 
-    with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirpath_p = Path(dirpath)
-            
-            # ВАЖНО: Фильтруем директории in-place ДО того, как os.walk в них спустится.
-            # Добавляем "/", чтобы pathspec корректно обрабатывал паттерны папок (например, "build/").
-            dirnames[:] = [
-                d for d in dirnames
-                if not spec.match_file(rel_posix(dirpath_p / d, root) + "/")
-            ]
-
-            dirnames.sort()
-            filenames.sort()
-
-            for fname in filenames:
-                f_path = dirpath_p / fname
-                rel_file = rel_posix(f_path, root)
-
-                if archive_rel_posix and rel_file == archive_rel_posix:
-                    continue
-
-                if spec.match_file(rel_file):
-                    continue
-
-                if verbose:
-                    print(f"Adding: {rel_file}")
+    try:
+        with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirpath_p = Path(dirpath)
                 
-                zf.write(f_path, rel_file)
+                dirnames.sort()
+                filenames.sort()
+
+                for fname in filenames:
+                    f_path = dirpath_p / fname
+                    rel_file = rel_posix(f_path, root)
+
+                    if archive_rel_posix and rel_file == archive_rel_posix:
+                        continue
+
+                    if spec.match_file(rel_file):
+                        continue
+
+                    if verbose:
+                        print(f"Adding: {rel_file}")
+                    try:
+                        zf.write(f_path, rel_file)
+                    except OSError as exc:
+                        raise OSError(
+                            f"Cannot write '{f_path}' to archive '{output_zip}': {exc}"
+                        ) from exc
+    except OSError as exc:
+        raise OSError(f"Cannot create archive '{output_zip}': {exc}") from exc
 
 
 def parse_args() -> argparse.Namespace:
@@ -139,15 +143,17 @@ def main() -> None:
     if not root.is_dir():
         raise SystemExit(f"Root path is not a directory: {root}")
 
-    # Элегантное решение с путями: pathlib сам разберется, если ignore_file уже абсолютный
+    # Elegant path handling: pathlib resolves both relative and absolute ignore paths.
     ignore_arg_path = Path(args.ignore_file)
     ignore_file = (root / ignore_arg_path).resolve()
 
-    patterns = read_ignore_patterns(ignore_file)
-    spec = build_spec(patterns)
-
-    output_zip.parent.mkdir(parents=True, exist_ok=True)
-    create_archive(root, output_zip, spec, verbose=args.verbose)
+    try:
+        patterns = read_ignore_patterns(ignore_file)
+        spec = build_spec(patterns)
+        output_zip.parent.mkdir(parents=True, exist_ok=True)
+        create_archive(root, output_zip, spec, verbose=args.verbose)
+    except OSError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":
