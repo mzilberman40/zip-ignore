@@ -2,5 +2,7 @@ __pycache__/
 *.zip
 .venv/
 .vscode/
+build/
+dist/
 zip_ignore.egg-info/
 

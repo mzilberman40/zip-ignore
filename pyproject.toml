@@ -5,12 +5,45 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zip-ignore"
 version = "0.1.0"
-description = "A small tool to create ZIP archives respecting gitignore-style exclusion rules."
+description = "A small CLI to create ZIP archives while respecting .zipignore patterns."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.7"
+authors = [
+    { name = "Mikhail Zilberman" },
+]
 dependencies = [
     "pathspec>=0.11.0",
 ]
+keywords = ["zip", "archive", "ignore", "gitignore", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Archiving",
+]
+
+[project.urls]
+Homepage = "https://github.com/mzilberman40/zip-ignore"
+Repository = "https://github.com/mzilberman40/zip-ignore"
+Issues = "https://github.com/mzilberman40/zip-ignore/issues"
+
+[project.optional-dependencies]
+dev = ["build", "twine"]
 
 [project.scripts]
 zip-ignore = "zip_ignore:main"
+
+[tool.setuptools]
+py-modules = ["zip_ignore"]
