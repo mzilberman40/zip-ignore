@@ -1,29 +1,6 @@
 #!/usr/bin/env python3
 """
 zip_ignore.py - Create a ZIP archive of a project while excluding paths listed in a .zipignore file.
-
-Usage:
-  python zip_ignore.py [-o OUTPUT] [-i IGNOREFILE] [ROOT]
-
-Arguments:
-  ROOT         Project root to archive (default: current directory).
-
-Options:
-  -o, --output      Output ZIP filename or path. If placed inside ROOT,
-                    the archive is automatically excluded from itself.
-                    [default: project.zip]
-  -i, --ignorefile  Ignore file (gitignore-style patterns). [default: .zipignore]
-
-Patterns:
-  The ignore file uses gitignore-style semantics via `pathspec`.
-  Empty lines and lines starting with '#' are ignored.
-  Examples:
-    .git/
-    .idea/
-    .venv/
-    __pycache__/
-    *.log
-    data/raw/**
 """
 
 from __future__ import annotations
@@ -79,10 +56,9 @@ def is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
-def create_archive(root: Path, output_zip: Path, spec: PathSpec) -> None:
+def create_archive(root: Path, output_zip: Path, spec: PathSpec, verbose: bool = False) -> None:
     """
-    Walk `root` and write files to `output_zip`, skipping any path matched by `spec`
-    and skipping the archive file itself if it resides under `root`.
+    Walk `root` and write files to `output_zip`, skipping paths matched by `spec`.
     """
     root = root.resolve()
     output_zip = output_zip.resolve()
@@ -93,10 +69,18 @@ def create_archive(root: Path, output_zip: Path, spec: PathSpec) -> None:
 
     with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for dirpath, dirnames, filenames in os.walk(root):
+            dirpath_p = Path(dirpath)
+            
+            # ВАЖНО: Фильтруем директории in-place ДО того, как os.walk в них спустится.
+            # Добавляем "/", чтобы pathspec корректно обрабатывал паттерны папок (например, "build/").
+            dirnames[:] = [
+                d for d in dirnames
+                if not spec.match_file(rel_posix(dirpath_p / d, root) + "/")
+            ]
+
             dirnames.sort()
             filenames.sort()
 
-            dirpath_p = Path(dirpath)
             for fname in filenames:
                 f_path = dirpath_p / fname
                 rel_file = rel_posix(f_path, root)
@@ -107,6 +91,9 @@ def create_archive(root: Path, output_zip: Path, spec: PathSpec) -> None:
                 if spec.match_file(rel_file):
                     continue
 
+                if verbose:
+                    print(f"Adding: {rel_file}")
+                
                 zf.write(f_path, rel_file)
 
 
@@ -126,9 +113,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "-i",
-        "--ignorefile",
+        "--ignore-file",
         default=".zipignore",
         help="Ignore file with gitignore-style patterns (default: .zipignore)",
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print added files to stdout",
     )
     return p.parse_args()
 
@@ -146,15 +139,15 @@ def main() -> None:
     if not root.is_dir():
         raise SystemExit(f"Root path is not a directory: {root}")
 
-    ignore_arg_path = Path(args.ignorefile)
-    ignorefile = ignore_arg_path if ignore_arg_path.is_absolute() else root / ignore_arg_path
-    ignorefile = ignorefile.resolve()
+    # Элегантное решение с путями: pathlib сам разберется, если ignore_file уже абсолютный
+    ignore_arg_path = Path(args.ignore_file)
+    ignore_file = (root / ignore_arg_path).resolve()
 
-    patterns = read_ignore_patterns(ignorefile)
+    patterns = read_ignore_patterns(ignore_file)
     spec = build_spec(patterns)
 
     output_zip.parent.mkdir(parents=True, exist_ok=True)
-    create_archive(root, output_zip, spec)
+    create_archive(root, output_zip, spec, verbose=args.verbose)
 
 
 if __name__ == "__main__":

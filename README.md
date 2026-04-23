@@ -10,6 +10,7 @@ It is useful when you want to share a project snapshot without bundling virtual 
 - Supports negation patterns such as `!build/keep.txt`.
 - Automatically avoids adding the output archive into itself.
 - Works with relative or absolute paths on Windows, macOS, and Linux.
+- Includes an optimised in-place directory traversal to skip ignored folders entirely.
 
 ## Installation
 
@@ -64,7 +65,7 @@ C:\Users\<YourUser>\AppData\Roaming\Python\Python313\Scripts
 ## Usage
 
 ```bash
-zip-ignore [ROOT] [-o OUTPUT] [-i IGNOREFILE]
+zip-ignore [ROOT] [-o OUTPUT] [-i IGNORE_FILE] [-v]
 ```
 
 Examples:
@@ -74,6 +75,7 @@ zip-ignore
 zip-ignore . -o release.zip
 zip-ignore ./my-project -o ../artifacts/my-project.zip
 zip-ignore . -i .gitignore -o source-only.zip
+zip-ignore . -v  # verbose mode: prints added files to stdout
 ```
 
 ## `.zipignore` format
