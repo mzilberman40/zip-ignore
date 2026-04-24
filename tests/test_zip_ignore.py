@@ -1,10 +1,14 @@
 import io
+import os
 import shutil
 import unittest
 import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
 from zip_ignore import build_spec, create_archive, read_ignore_patterns, rel_posix, is_relative_to
+
 
 class ZipIgnoreTests(unittest.TestCase):
     def make_case_root(self, name: str) -> Path:
@@ -14,12 +18,12 @@ class ZipIgnoreTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         return root
 
-    def test_read_ignore_patterns_nonexistent_file(self) -> None:
+    def test_read_ignore_patterns_nonexistent_file_raises(self) -> None:
         nonexistent = Path("nonexistent.zipignore")
-        patterns = read_ignore_patterns(nonexistent)
-        self.assertEqual(patterns, [])
+        with self.assertRaises(OSError):
+            read_ignore_patterns(nonexistent)
 
-    def test_read_ignore_patterns_with_comments_and_blanks(self) -> None:
+    def test_read_ignore_patterns_preserves_raw_lines(self) -> None:
         root = self.make_case_root("_case_ignore_patterns")
         ignore_file = root / ".zipignore"
         ignore_file.write_text("""
@@ -32,7 +36,19 @@ __pycache__/
 # Empty line above
 """)
         patterns = read_ignore_patterns(ignore_file)
-        self.assertEqual(patterns, ["*.tmp", "__pycache__/"])
+        self.assertEqual(
+            patterns,
+            [
+                "",
+                "# This is a comment",
+                "*.tmp",
+                "",
+                "   # Another comment with spaces",
+                "__pycache__/",
+                "",
+                "# Empty line above",
+            ],
+        )
 
     def test_read_ignore_patterns_raises_on_directory(self) -> None:
         root = self.make_case_root("_case_ignore_dir_error")
@@ -117,6 +133,61 @@ __pycache__/
             namelist = archive.namelist()
             self.assertNotIn("build/temp.tmp", namelist)
             self.assertIn("build/keep.txt", namelist)
+
+    def test_ignored_directories_are_pruned_without_breaking_negation(self) -> None:
+        root = self.make_case_root("_case_pruned_walk")
+        (root / "root.txt").write_text("root")
+        (root / "keep").mkdir()
+        (root / "keep" / "file.txt").write_text("keep")
+        (root / "ignored").mkdir()
+        (root / "ignored" / "skip.txt").write_text("skip")
+        (root / "build").mkdir()
+        (root / "build" / "keep.txt").write_text("keep")
+        output_zip = root / "archive.zip"
+        visited = []
+
+        def fake_walk(start):
+            dirnames = ["ignored", "keep", "build"]
+            filenames = ["root.txt", "archive.zip"]
+            visited.append(Path(start).resolve())
+            yield str(start), dirnames, filenames
+
+            if "ignored" in dirnames:
+                visited.append((Path(start) / "ignored").resolve())
+                yield str(Path(start) / "ignored"), [], ["skip.txt"]
+
+            if "keep" in dirnames:
+                visited.append((Path(start) / "keep").resolve())
+                yield str(Path(start) / "keep"), [], ["file.txt"]
+
+            if "build" in dirnames:
+                visited.append((Path(start) / "build").resolve())
+                yield str(Path(start) / "build"), [], ["keep.txt"]
+
+        spec = build_spec(["ignored/", "build/", "!build/keep.txt"])
+        with patch("zip_ignore.os.walk", side_effect=fake_walk):
+            create_archive(root, output_zip, spec)
+
+        self.assertNotIn((root / "ignored").resolve(), visited)
+        self.assertIn((root / "build").resolve(), visited)
+
+        with zipfile.ZipFile(output_zip) as archive:
+            namelist = archive.namelist()
+            self.assertIn("keep/file.txt", namelist)
+            self.assertIn("build/keep.txt", namelist)
+            self.assertNotIn("ignored/skip.txt", namelist)
+
+    def test_pre_1980_timestamps_do_not_crash_archive_creation(self) -> None:
+        root = self.make_case_root("_case_old_timestamp")
+        old_file = root / "old.txt"
+        old_file.write_text("payload")
+        os.utime(old_file, (0, 0))
+
+        output_zip = root / "archive.zip"
+        create_archive(root, output_zip, build_spec([]))
+
+        with zipfile.ZipFile(output_zip) as archive:
+            self.assertIn("old.txt", archive.namelist())
 
     def test_nested_directories(self) -> None:
         root = self.make_case_root("_case_nested")

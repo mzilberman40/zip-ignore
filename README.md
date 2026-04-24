@@ -10,7 +10,8 @@ It is useful when you want to share a project snapshot without bundling virtual 
 - Supports negation patterns such as `!build/keep.txt`.
 - Automatically avoids adding the output archive into itself.
 - Works with relative or absolute paths on Windows, macOS, and Linux.
-- Includes an optimised in-place directory traversal to skip ignored folders entirely.
+- Prunes ignored folders during traversal when it is safe to do so without breaking negation patterns.
+- Handles files with pre-1980 timestamps without crashing.
 
 ## Installation
 
@@ -24,6 +25,28 @@ Or install locally for development:
 
 ```bash
 python -m pip install .
+```
+
+## Updating
+
+If you installed `zip-ignore` from GitHub with `pipx`, update it with:
+
+```bash
+pipx upgrade zip-ignore
+```
+
+`pipx upgrade` only sees a new release when the package version changes. If the installed version and the source version are both `0.1.0`, `pipx` will report that you are already on the latest version even if the code changed.
+
+If you installed from the local project directory instead, reinstall from that directory after making changes:
+
+```bash
+pipx reinstall .
+```
+
+If you installed with `pip --user`, update from the project directory with:
+
+```bash
+py -m pip install --user --upgrade .
 ```
 
 ## Windows 11: Use From Anywhere
@@ -82,6 +105,8 @@ zip-ignore . -v  # verbose mode: prints added files to stdout
 
 The ignore file uses gitignore-style patterns.
 
+The ignore file must exist. By default, `zip-ignore` expects a `.zipignore` file in the project root; use `-i` to point at a different existing ignore file such as `.gitignore`.
+
 Example:
 
 ```gitignore
@@ -101,7 +126,7 @@ dist/
 !build/keep.txt
 ```
 
-Empty lines and lines starting with `#` are ignored.
+Empty lines are ignored. Lines that start with `#` are treated as comments unless the `#` is escaped, matching normal `.gitignore` behavior.
 
 ## Development
 

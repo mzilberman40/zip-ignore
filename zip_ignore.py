@@ -9,30 +9,24 @@ import argparse
 import os
 import zipfile
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 from pathspec import PathSpec
 
 
 def read_ignore_patterns(ignore_path: Path) -> List[str]:
     """
-    Read ignore patterns from `ignore_path`, stripping comments and blanks.
-    Returns an empty list if the file does not exist.
+    Read raw ignore patterns from `ignore_path`.
+    Raises an error if the file does not exist or cannot be read.
     """
     if not ignore_path.exists():
-        return []
+        raise OSError(f"Ignore file does not exist: {ignore_path}")
     try:
         lines = ignore_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise OSError(f"Cannot read ignore file '{ignore_path}': {exc}") from exc
 
-    patterns: List[str] = []
-    for line in lines:
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        patterns.append(s)
-    return patterns
+    return lines
 
 
 def build_spec(patterns: Iterable[str]) -> PathSpec:
@@ -49,6 +43,13 @@ def rel_posix(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+def rel_dir_posix(path: Path, root: Path) -> str:
+    """
+    Return a POSIX-style relative directory path with a trailing slash.
+    """
+    return f"{rel_posix(path, root)}/"
+
+
 def is_relative_to(path: Path, root: Path) -> bool:
     """
     Return True when `path` is inside `root`, compatible with Python < 3.9.
@@ -58,6 +59,42 @@ def is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def negation_walk_prefixes(spec: PathSpec) -> Set[str]:
+    """
+    Return directory prefixes that must be traversed to honor negation patterns.
+    """
+    prefixes: Set[str] = set()
+
+    for pattern in spec.patterns:
+        if getattr(pattern, "include", None) is not False:
+            continue
+
+        raw_pattern = getattr(pattern, "pattern", "")
+        if not raw_pattern.startswith("!"):
+            continue
+
+        negated = raw_pattern[1:].rstrip()
+        if not negated:
+            continue
+
+        negated = negated.lstrip("/")
+        if not negated:
+            continue
+
+        parts = [part for part in negated.split("/") if part]
+        if not parts:
+            continue
+
+        walk_parts: List[str] = []
+        for part in parts[:-1]:
+            if any(ch in part for ch in "*?["):
+                break
+            walk_parts.append(part)
+            prefixes.add("/".join(walk_parts))
+
+    return prefixes
 
 
 def create_archive(root: Path, output_zip: Path, spec: PathSpec, verbose: bool = False) -> None:
@@ -71,13 +108,30 @@ def create_archive(root: Path, output_zip: Path, spec: PathSpec, verbose: bool =
     if is_relative_to(output_zip, root):
         archive_rel_posix = rel_posix(output_zip, root)
 
+    preserved_prefixes = negation_walk_prefixes(spec)
+
     try:
-        with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(
+            output_zip,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+            strict_timestamps=False,
+        ) as zf:
             for dirpath, dirnames, filenames in os.walk(root):
                 dirpath_p = Path(dirpath)
-                
+
                 dirnames.sort()
                 filenames.sort()
+
+                # Prune ignored directories unless a negation pattern needs us to walk through them.
+                dirnames[:] = [
+                    dirname
+                    for dirname in dirnames
+                    if (
+                        not spec.match_file(rel_dir_posix(dirpath_p / dirname, root))
+                        or rel_posix(dirpath_p / dirname, root) in preserved_prefixes
+                    )
+                ]
 
                 for fname in filenames:
                     f_path = dirpath_p / fname
@@ -93,11 +147,11 @@ def create_archive(root: Path, output_zip: Path, spec: PathSpec, verbose: bool =
                         print(f"Adding: {rel_file}")
                     try:
                         zf.write(f_path, rel_file)
-                    except OSError as exc:
+                    except (OSError, ValueError) as exc:
                         raise OSError(
                             f"Cannot write '{f_path}' to archive '{output_zip}': {exc}"
                         ) from exc
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise OSError(f"Cannot create archive '{output_zip}': {exc}") from exc
 
 
