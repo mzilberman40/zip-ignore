@@ -4,10 +4,18 @@ import shutil
 import unittest
 import zipfile
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from zip_ignore import build_spec, create_archive, read_ignore_patterns, rel_posix, is_relative_to
+from zip_ignore import (
+    build_spec,
+    create_archive,
+    default_archive_name,
+    is_relative_to,
+    read_ignore_patterns,
+    rel_posix,
+)
 
 
 class ZipIgnoreTests(unittest.TestCase):
@@ -66,6 +74,15 @@ __pycache__/
         outside = Path("/other")
         self.assertTrue(is_relative_to(inside, root))
         self.assertFalse(is_relative_to(outside, root))
+
+    def test_default_archive_name_includes_folder_name_and_creation_time(self) -> None:
+        root = self.make_case_root("_case_default_name")
+        created_at = datetime(2026, 5, 1, 13, 45, 9)
+
+        self.assertEqual(
+            default_archive_name(root, created_at),
+            "_case_default_name_20260501_134509.zip",
+        )
 
     def test_output_archive_is_not_added_to_itself(self) -> None:
         root = self.make_case_root("_case_self_exclusion")

@@ -4,6 +4,8 @@
 
 It is useful when you want to share a project snapshot without bundling virtual environments, caches, local editor files, build outputs, or other artifacts.
 
+By default, the archive is named after the project folder and creation time, such as `my-project_20260501_134509.zip`.
+
 ## Features
 
 - Uses `pathspec` with gitignore-style matching.

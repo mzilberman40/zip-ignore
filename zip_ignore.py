@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Set
 
@@ -59,6 +60,16 @@ def is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def default_archive_name(root: Path, created_at: Optional[datetime] = None) -> str:
+    """
+    Return the default archive filename for `root`.
+    """
+    created_at = created_at or datetime.now()
+    folder_name = root.resolve().name
+    timestamp = created_at.strftime("%Y%m%d_%H%M%S")
+    return f"{folder_name}_{timestamp}.zip"
 
 
 def negation_walk_prefixes(spec: PathSpec) -> Set[str]:
@@ -166,8 +177,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "-o",
         "--output",
-        default="project.zip",
-        help="Output ZIP filename/path (default: project.zip)",
+        default=None,
+        help="Output ZIP filename/path (default: ROOT_YYYYMMDD_HHMMSS.zip)",
     )
     p.add_argument(
         "-i",
@@ -190,7 +201,7 @@ def main() -> None:
     """
     args = parse_args()
     root = Path(args.root).resolve()
-    output_zip = Path(args.output).resolve()
+    output_zip = Path(args.output or default_archive_name(root)).resolve()
 
     if not root.exists():
         raise SystemExit(f"Root path does not exist: {root}")
