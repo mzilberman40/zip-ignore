@@ -6,3 +6,5 @@ build/
 dist/
 zip_ignore.egg-info/
 
+archive
+backup

@@ -1,6 +1,7 @@
 import io
 import os
 import shutil
+import subprocess
 import unittest
 import zipfile
 from contextlib import redirect_stdout
@@ -15,6 +16,10 @@ from zip_ignore import (
     is_relative_to,
     read_ignore_patterns,
     rel_posix,
+    create_snapshot,
+    get_git_metadata,
+    is_sensitive_path,
+    select_snapshot_files,
 )
 
 
@@ -235,3 +240,264 @@ __pycache__/
             self.assertIn("file.txt", namelist)
             # Empty directories are not stored in ZIP
             self.assertNotIn("empty/", namelist)
+
+
+class SnapshotProfileTests(unittest.TestCase):
+    def make_case_root(self, name: str) -> Path:
+        root = Path(__file__).resolve().parent / name
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        return root
+
+    def names_in_snapshot(self, root: Path, profile: str, include=(), exclude=()):
+        output = root / "snapshot.zip"
+        create_snapshot(
+            root,
+            output,
+            build_spec([]),
+            profile=profile,
+            include_patterns=include,
+            exclude_patterns=exclude,
+        )
+        with zipfile.ZipFile(output) as archive:
+            return set(archive.namelist())
+
+    def test_review_excludes_generated_reports_but_keeps_tests(self) -> None:
+        root = self.make_case_root("_case_review_profile")
+        (root / "app.py").write_text("print('app')")
+        tests = root / "tests"
+        tests.mkdir()
+        (tests / "test_app.py").write_text("def test_app(): pass")
+        htmlcov = root / "htmlcov"
+        htmlcov.mkdir()
+        (htmlcov / "index.html").write_text("coverage")
+
+        names = self.names_in_snapshot(root, "review")
+
+        self.assertIn("app.py", names)
+        self.assertIn("tests/test_app.py", names)
+        self.assertNotIn("htmlcov/index.html", names)
+        self.assertIn("SNAPSHOT_MANIFEST.txt", names)
+
+    def test_context_excludes_tests(self) -> None:
+        root = self.make_case_root("_case_context_profile")
+        (root / "app.py").write_text("print('app')")
+        tests = root / "tests"
+        tests.mkdir()
+        (tests / "test_app.py").write_text("def test_app(): pass")
+
+        names = self.names_in_snapshot(root, "context")
+
+        self.assertIn("app.py", names)
+        self.assertNotIn("tests/test_app.py", names)
+
+    def test_context_include_can_restore_profile_excluded_test(self) -> None:
+        root = self.make_case_root("_case_context_include")
+        tests = root / "tests"
+        tests.mkdir()
+        (tests / "test_app.py").write_text("def test_app(): pass")
+
+        names = self.names_in_snapshot(
+            root,
+            "context",
+            include=("tests/test_app.py",),
+        )
+
+        self.assertIn("tests/test_app.py", names)
+
+    def test_cli_exclude_wins_over_profile_include(self) -> None:
+        root = self.make_case_root("_case_cli_exclude")
+        tests = root / "tests"
+        tests.mkdir()
+        (tests / "test_app.py").write_text("def test_app(): pass")
+
+        names = self.names_in_snapshot(
+            root,
+            "context",
+            include=("tests/test_app.py",),
+            exclude=("tests/**",),
+        )
+
+        self.assertNotIn("tests/test_app.py", names)
+
+    def test_full_profile_keeps_generated_report_when_repository_allows_it(self) -> None:
+        root = self.make_case_root("_case_full_profile")
+        htmlcov = root / "htmlcov"
+        htmlcov.mkdir()
+        (htmlcov / "index.html").write_text("coverage")
+
+        names = self.names_in_snapshot(root, "full")
+
+        self.assertIn("htmlcov/index.html", names)
+
+    def test_sensitive_files_are_always_excluded(self) -> None:
+        root = self.make_case_root("_case_sensitive")
+        (root / ".env").write_text("SECRET=do-not-share")
+        (root / ".env.example").write_text("SECRET=replace-me")
+        (root / "id_ed25519").write_text("private")
+        (root / "app.py").write_text("print('app')")
+
+        names = self.names_in_snapshot(
+            root,
+            "full",
+            include=(".env", "id_ed25519"),
+        )
+
+        self.assertNotIn(".env", names)
+        self.assertNotIn("id_ed25519", names)
+        self.assertIn(".env.example", names)
+        self.assertIn("app.py", names)
+
+    def test_sensitive_path_detection(self) -> None:
+        self.assertTrue(is_sensitive_path(".env"))
+        self.assertTrue(is_sensitive_path(".env.local"))
+        self.assertTrue(is_sensitive_path(".kube/config"))
+        self.assertTrue(is_sensitive_path("keys/server.pem"))
+        self.assertTrue(is_sensitive_path("terraform/prod.tfvars"))
+        self.assertFalse(is_sensitive_path(".env.example"))
+        self.assertFalse(is_sensitive_path("config/secret.yaml"))
+        self.assertFalse(is_sensitive_path("README.md"))
+
+    def test_repository_ignore_cannot_be_overridden_by_include(self) -> None:
+        root = self.make_case_root("_case_repo_ignore")
+        (root / "ignored.txt").write_text("ignored")
+        (root / "keep.txt").write_text("keep")
+        output = root / "snapshot.zip"
+
+        create_snapshot(
+            root,
+            output,
+            build_spec(["ignored.txt"]),
+            profile="full",
+            include_patterns=("ignored.txt",),
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertNotIn("ignored.txt", names)
+        self.assertIn("keep.txt", names)
+
+    def test_manifest_contains_profile_and_file_list_without_absolute_root(self) -> None:
+        root = self.make_case_root("_case_manifest")
+        (root / "app.py").write_text("print('app')")
+        output = root / "snapshot.zip"
+
+        create_snapshot(root, output, build_spec([]), profile="review")
+
+        with zipfile.ZipFile(output) as archive:
+            manifest = archive.read("SNAPSHOT_MANIFEST.txt").decode("utf-8")
+        self.assertIn("tool_version: 0.2.1", manifest)
+        self.assertIn("profile: review", manifest)
+        self.assertIn("app.py", manifest)
+        self.assertNotIn(str(root.resolve()), manifest)
+
+    @unittest.skipUnless(shutil.which("git"), "Git executable is required")
+    def test_git_aware_selection_omits_gitignored_file_and_keeps_untracked_source(self) -> None:
+        root = self.make_case_root("_case_git_aware")
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / ".gitignore").write_text("ignored.bin\n")
+        (root / "tracked.py").write_text("tracked")
+        subprocess.run(["git", "-C", str(root), "add", ".gitignore", "tracked.py"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "initial",
+            ],
+            check=True,
+        )
+        (root / "new.py").write_text("new")
+        (root / "ignored.bin").write_text("ignored")
+
+        output = root / "snapshot.zip"
+        create_snapshot(root, output, build_spec([]), profile="review")
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertIn(".gitignore", names)
+        self.assertIn("tracked.py", names)
+        self.assertIn("new.py", names)
+        self.assertNotIn("ignored.bin", names)
+        self.assertFalse(any(name.startswith(".git/") for name in names))
+
+    @unittest.skipUnless(shutil.which("git"), "Git executable is required")
+    def test_changed_profile_contains_only_worktree_changes(self) -> None:
+        root = self.make_case_root("_case_git_changed")
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "changed.py").write_text("before")
+        (root / "unchanged.py").write_text("same")
+        subprocess.run(["git", "-C", str(root), "add", "changed.py", "unchanged.py"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "initial",
+            ],
+            check=True,
+        )
+        (root / "changed.py").write_text("after")
+        (root / "new.py").write_text("new")
+
+        output = root / "snapshot.zip"
+        create_snapshot(root, output, build_spec([]), profile="changed")
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertIn("changed.py", names)
+        self.assertIn("new.py", names)
+        self.assertNotIn("unchanged.py", names)
+
+    def test_changed_profile_requires_git(self) -> None:
+        root = self.make_case_root("_case_changed_no_git")
+        (root / "app.py").write_text("data")
+        with self.assertRaises(OSError):
+            select_snapshot_files(
+                root,
+                root / "snapshot.zip",
+                build_spec([]),
+                profile="changed",
+            )
+
+
+class SnapshotSymlinkSafetyTests(unittest.TestCase):
+    def test_snapshot_does_not_dereference_symlink(self) -> None:
+        root = Path(__file__).resolve().parent / "_case_symlink_guard"
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        target = root / ".env"
+        target.write_text("SECRET=must-not-leak")
+        link = root / "safe-looking.txt"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlinks are unavailable in this test environment")
+
+        output = root / "snapshot.zip"
+        result = create_snapshot(root, output, build_spec([]), profile="full")
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+            payloads = [archive.read(name) for name in names]
+
+        self.assertNotIn("safe-looking.txt", names)
+        self.assertNotIn(b"SECRET=must-not-leak", payloads)
+        self.assertEqual(result.skipped_counts.get("symlink"), 1)

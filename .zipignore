@@ -3,7 +3,6 @@
 
 # Version control
 .git/
-.gitignore
 
 # Python
 __pycache__/
@@ -50,6 +49,13 @@ env/
 ehthumbs.db
 Thumbs.db
 
+# Coverage and generated reports
+htmlcov/
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # Build artifacts
 build/
 dist/
@@ -64,3 +70,6 @@ dist/
 # Temporary files
 *.tmp
 *.temp
+
+archive/
+backup/

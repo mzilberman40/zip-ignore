@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zip-ignore"
-version = "0.1.1"
-description = "A small CLI to create ZIP archives while respecting .zipignore patterns."
+version = "0.2.1"
+description = "Create compact, Git-aware ZIP snapshots for code review and AI collaboration."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.7"

@@ -1,0 +1,17 @@
+zip-ignore snapshot manifest
+tool_version: 0.2.1
+created_utc: 2026-09-18T07:12:51Z
+repository: zipignore_work
+profile: review
+selection_mode: filesystem-fallback
+included_files: 6
+included_source_bytes: 58917
+skipped: none
+git: unavailable-or-not-a-worktree
+files:
+  .zipignore
+  LICENSE
+  README.md
+  pyproject.toml
+  zip_ignore.py
+  tests/test_zip_ignore.py
